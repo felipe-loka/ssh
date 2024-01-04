@@ -1,0 +1,7 @@
+#!/bin/bash
+
+LOCAL_PORT=$1
+USERNAME=$2
+PASSWORD=$3
+
+mysql -h 127.0.0.1 -P $LOCAL_PORT -u $USERNAME -p$PASSWORD
