@@ -21,7 +21,7 @@
 FROM mongo:7
 
 RUN apt-get update && \
-    apt-get install -y gnupg zip curl wget python3 python3-pip mysql-client && \
+    apt-get install -y gnupg zip curl wget python3 python3-pip mysql-client redis && \
     curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     ./aws/install && \

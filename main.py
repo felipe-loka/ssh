@@ -18,7 +18,7 @@ logging.basicConfig(
 ENVIRONMENT VARIABLES:
 
 -> ENVIRONMENT: Environment to be used. Allowed values: dev, qa, staging, prod
--> TARGET: If you want to connect to MySQL (rds) or DocumentDB (mongodb). Allowed values: rds, documentdb.
+-> TARGET: If you want to connect to MySQL (rds), MongoDB (documentdb) o Redis (elasticache). Allowed values: rds, documentdb, elasticache.
 """
 
 region = "us-west-2"
@@ -42,7 +42,7 @@ class RdsSecret:
 def assert_environment_variables():
     environment_variables = {
         "ENVIRONMENT": ["dev", "qa", "staging", "prod"],
-        "TARGET": ["rds", "documentdb"],
+        "TARGET": ["rds", "documentdb", "elasticache"],
     }
 
     for (
@@ -118,6 +118,46 @@ def get_bastion_host_id() -> str:
     return instance_id
 
 
+def get_redis_endpoint() -> str:
+    logger.info("Getting the Endpoint of the Redis Cluster...")
+
+    elasticache = boto3.client("elasticache", region_name=region)
+    response = elasticache.describe_cache_clusters(ShowCacheNodeInfo=True)
+    try:
+        clusters = [
+            {
+                "arn": cluster["ARN"],
+                "endpoint": cluster["ConfigurationEndpoint"]["Address"],
+            }
+            for cluster in response["CacheClusters"]
+        ]
+    except:
+        clusters = [
+            {
+                "arn": cluster["ARN"],
+                "endpoint": cluster["CacheNodes"][0]["Endpoint"]["Address"],
+            }
+            for cluster in response["CacheClusters"]
+        ]
+
+    endpoint = ""
+    for cluster in clusters:
+        response = elasticache.list_tags_for_resource(ResourceName=cluster["arn"])
+        for tags in response["TagList"]:
+            if tags["Key"] == "Environment" and tags["Value"] == os.getenv(
+                "ENVIRONMENT"
+            ):
+                endpoint = cluster["endpoint"]
+                break
+
+    if not endpoint:
+        raise Exception(
+            "It was not possible to find the Endpoint of the Redis cluster... Please debug the code."
+        )
+
+    return endpoint
+
+
 def get_documentdb_endpoint() -> str:
     logger.info("Getting the Endpoint of the DocumentDB Cluster...")
 
@@ -144,6 +184,7 @@ def get_documentdb_endpoint() -> str:
         )
 
     return endpoint
+
 
 def port_forward(bastion_id: str, endpoint: str, remote_port: str, local_port: str):
     logger.info("Port-forwarding the Bastion Host...")
@@ -179,6 +220,11 @@ def connect_rds(username: str, password: str, local_port: str):
     subprocess.call(["bash", "connect-rds.sh", local_port, username, password])
 
 
+def connect_elasticache(local_port: str):
+    logger.info("Connecting to Redis database...")
+    subprocess.call(["bash", "connect-elasticache.sh", local_port])
+
+
 if __name__ == "__main__":
     assert_environment_variables()
     if not has_valid_aws_credentials():
@@ -197,7 +243,7 @@ if __name__ == "__main__":
         thread.start()
         time.sleep(5)
         connect_mongodb(secrets.username, secrets.password, local_port)
-    else:
+    elif os.getenv("TARGET") == "rds":
         secrets = get_rds_secret()
         thread = Thread(
             target=port_forward,
@@ -206,3 +252,12 @@ if __name__ == "__main__":
         thread.start()
         time.sleep(5)
         connect_rds(secrets.username, secrets.password, local_port)
+    else:
+        endpoint = get_redis_endpoint()
+        thread = Thread(
+            target=port_forward,
+            args=[bastion_id, endpoint, "6379", local_port],
+        )
+        thread.start()
+        time.sleep(5)
+        connect_elasticache(local_port)
